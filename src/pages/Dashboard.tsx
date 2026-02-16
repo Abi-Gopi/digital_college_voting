@@ -10,6 +10,7 @@ import {
   MessageSquare,
   ClipboardList,
   Shield,
+  FileCheck,
 } from "lucide-react";
 
 import DashboardHome from "./DashboardHome";
@@ -19,6 +20,8 @@ import Feedback from "./Feedback";
 import SettingsPage from "./Settings";
 import Vote from "./Vote";
 import Admin from "./Admin";
+import AdminFeedback from "./AdminFeedback";
+import AdminKyc from "./AdminKyc";
 import { toast } from "sonner";
 
 type Role = "admin" | "voter";
@@ -42,7 +45,7 @@ const Dashboard = () => {
         const r: Role = user.role === "admin" ? "admin" : "voter";
         setRole(r);
       } catch (e) {
-        console.error("Failed to parse user from localStorage", e);
+        console.error("Failed to parse user", e);
       }
     }
   }, [navigate]);
@@ -51,7 +54,7 @@ const Dashboard = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     toast.success("Logged out successfully!");
-    navigate("/"); // Back to main landing page
+    navigate("/");
   };
 
   const renderContent = () => {
@@ -70,6 +73,10 @@ const Dashboard = () => {
         return <SettingsPage />;
       case "admin":
         return <Admin />;
+      case "admin-feedback":
+        return <AdminFeedback />;
+      case "admin-kyc":
+        return <AdminKyc />;
       default:
         return <DashboardHome />;
     }
@@ -93,7 +100,6 @@ const Dashboard = () => {
           onClick={() => setActiveTab("candidates")}
         />
 
-        {/* VOTE: visible ONLY for normal voters */}
         {role === "voter" && (
           <SidebarItem
             icon={<ClipboardList size={18} />}
@@ -124,14 +130,34 @@ const Dashboard = () => {
           onClick={() => setActiveTab("settings")}
         />
 
-        {/* ADMIN PANEL: visible ONLY for admin */}
+        {/* ADMIN SECTION */}
         {role === "admin" && (
-          <SidebarItem
-            icon={<Shield size={18} />}
-            text="Admin Panel"
-            active={activeTab === "admin"}
-            onClick={() => setActiveTab("admin")}
-          />
+          <>
+            <div className="mt-4 text-xs text-blue-700 font-semibold uppercase">
+              Admin
+            </div>
+
+            <SidebarItem
+              icon={<Shield size={18} />}
+              text="Admin Panel"
+              active={activeTab === "admin"}
+              onClick={() => setActiveTab("admin")}
+            />
+
+            <SidebarItem
+              icon={<MessageSquare size={18} />}
+              text="Feedback Management"
+              active={activeTab === "admin-feedback"}
+              onClick={() => setActiveTab("admin-feedback")}
+            />
+
+            <SidebarItem
+              icon={<FileCheck size={18} />}
+              text="KYC Verification"
+              active={activeTab === "admin-kyc"}
+              onClick={() => setActiveTab("admin-kyc")}
+            />
+          </>
         )}
 
         <div className="mt-auto">

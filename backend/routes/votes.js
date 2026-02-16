@@ -1,3 +1,5 @@
+// routes/votes.js - FIXED: Using correct req.user field
+
 const express = require("express");
 const sql = require("mssql");
 const pool = require("../config/db");
@@ -10,13 +12,25 @@ router.post("/", authenticateToken, async (req, res) => {
   let transaction;
 
   try {
-    const voterId = req.user.id;
+    // ✅ FIXED: Use req.user.voterId instead of req.user.id
+    const voterId = req.user.voterId || req.user.id;
+    
+    console.log("=== VOTE SUBMISSION DEBUG ===");
+    console.log("User object:", req.user);
+    console.log("VoterId extracted:", voterId);
+
+    if (!voterId) {
+      console.error("❌ VoterId is NULL or undefined!");
+      return res.status(400).json({ error: "Invalid user session. Please log in again." });
+    }
+
     const { votes } = req.body;
 
     if (!votes || !Array.isArray(votes) || votes.length === 0) {
       return res.status(400).json({ error: "No votes provided" });
     }
 
+    // Check if already voted
     const existing = await pool
       .request()
       .input("VoterId", sql.Int, voterId)
@@ -26,29 +40,46 @@ router.post("/", authenticateToken, async (req, res) => {
       return res.status(400).json({ error: "You have already voted" });
     }
 
+    // Begin transaction
     transaction = pool.transaction();
     await transaction.begin();
 
+    console.log(`✅ Inserting ${votes.length} votes for VoterId: ${voterId}`);
+
+    // Insert each vote
     for (const vote of votes) {
+      console.log(`  - Position: ${vote.position}, CandidateId: ${vote.candidateId}`);
+      
       await transaction
         .request()
         .input("VoterId", sql.Int, voterId)
         .input("CandidateId", sql.Int, vote.candidateId)
         .query(`
           INSERT INTO dbo.Votes (VoterId, CandidateId, VotedAt)
-          VALUES (@VoterId, @CandidateId, GETUTCDATE())
+          VALUES (@VoterId, @CandidateId, GETDATE())
         `);
     }
 
     await transaction.commit();
+    console.log("✅ Vote submission successful!");
 
+    // Broadcast turnout update
     const broadcastTurnout = req.app.get("broadcastTurnout");
     if (broadcastTurnout) await broadcastTurnout();
 
-    res.json({ success: true });
+    res.json({ success: true, message: "Votes submitted successfully" });
+
   } catch (err) {
-    if (transaction) await transaction.rollback();
-    console.error(err);
+    if (transaction) {
+      try {
+        await transaction.rollback();
+        console.log("Transaction rolled back");
+      } catch (rollbackErr) {
+        console.error("Rollback error:", rollbackErr);
+      }
+    }
+    
+    console.error("❌ Vote submission error:", err);
     res.status(500).json({ error: "Vote submission failed" });
   }
 });
@@ -56,7 +87,8 @@ router.post("/", authenticateToken, async (req, res) => {
 /* ================= STATUS ================= */
 router.get("/status", authenticateToken, async (req, res) => {
   try {
-    const voterId = req.user.id;
+    // ✅ FIXED: Use req.user.voterId
+    const voterId = req.user.voterId || req.user.id;
 
     const userVote = await pool
       .request()
@@ -81,7 +113,7 @@ router.get("/status", authenticateToken, async (req, res) => {
       turnoutPercent: parseFloat(((voted / total) * 100).toFixed(2)),
     });
   } catch (err) {
-    console.error(err);
+    console.error("Status check error:", err);
     res.status(500).json({ error: "Status check failed" });
   }
 });
@@ -89,7 +121,8 @@ router.get("/status", authenticateToken, async (req, res) => {
 /* ================= SLIP ================= */
 router.get("/slip", authenticateToken, async (req, res) => {
   try {
-    const voterId = req.user.id;
+    // ✅ FIXED: Use req.user.voterId
+    const voterId = req.user.voterId || req.user.id;
 
     const voter = await pool
       .request()
@@ -138,7 +171,7 @@ router.get("/slip", authenticateToken, async (req, res) => {
       votes: formattedVotes,
     });
   } catch (err) {
-    console.error(err);
+    console.error("Slip generation error:", err);
     res.status(500).json({ error: "Slip generation failed" });
   }
 });
@@ -162,7 +195,7 @@ router.get("/results", authenticateToken, async (req, res) => {
 
     res.json(results.recordset);
   } catch (err) {
-    console.error(err);
+    console.error("Results fetch error:", err);
     res.status(500).json({ error: "Results fetch failed" });
   }
 });

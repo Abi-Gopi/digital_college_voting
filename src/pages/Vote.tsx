@@ -7,10 +7,11 @@ import { useNavigate } from "react-router-dom";
 import maleAvatar from "@/assets/male.png";
 import femaleAvatar from "@/assets/female.png";
 
+// ✅ CORRECTED: Match database column names
 interface Candidate {
-  Id: number;
-  Name: string;
-  Position: string;
+  CandidateId: number;  // Changed from 'Id'
+  Name: string;         // This matches DB
+  Position: string;     // This matches DB
   Manifesto?: string;
   PhotoUrl?: string;
   Gender?: string;
@@ -97,19 +98,21 @@ const Vote = () => {
     const missing = positionsToVote.filter((pos) => !selectedCandidates[pos]);
     if (missing.length > 0) {
       toast.error(
-        "Please select a candidate for each position before submitting."
+        `Please select a candidate for: ${missing.join(", ")}`
       );
       return;
     }
 
+    // ✅ CORRECTED: Use CandidateId instead of Id
     const votes = positionsToVote.map((position) => {
       const candidate = selectedCandidates[position]!;
       return {
         position,
-        // make sure it's a plain number
-        candidateId: Number(candidate.Id),
+        candidateId: Number(candidate.CandidateId), // Changed from candidate.Id
       };
     });
+
+    console.log("Submitting votes:", votes);
 
     try {
       setSubmitting(true);
@@ -137,7 +140,9 @@ const Vote = () => {
       }
 
       toast.success("✅ Your votes have been submitted successfully!");
-      navigate("/results");
+      
+      // Redirect to dashboard instead of results
+      navigate("/dashboard");
     } catch (error: any) {
       console.error("Vote submission error:", error);
       toast.error(error.message || "Failed to submit votes");
@@ -176,10 +181,10 @@ const Vote = () => {
               <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {candidateList.map((candidate) => {
                   const isSelected =
-                    selectedCandidates[position]?.Id === candidate.Id;
+                    selectedCandidates[position]?.CandidateId === candidate.CandidateId;
                   return (
                     <div
-                      key={candidate.Id}
+                      key={candidate.CandidateId}
                       onClick={() => handleSelect(position, candidate)}
                       className={`flex flex-col items-center p-4 border rounded-2xl cursor-pointer transition ${
                         isSelected

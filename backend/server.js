@@ -5,7 +5,6 @@ const http = require("http");
 const { Server } = require("socket.io");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
-
 // DB connection
 require("./config/db");
 
@@ -58,6 +57,12 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
+// 🔍 DEBUG: Log ALL incoming requests
+app.use((req, res, next) => {
+  console.log(`📥 ${req.method} ${req.url} - Body:`, req.body);
+  next();
+});
+
 // REAL-TIME TURNOUT
 app.set("broadcastTurnout", async () => {
   try {
@@ -90,9 +95,23 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/announcements", announcementRoutes);
 
+// 🔍 DEBUG: Confirm routes loaded
+console.log("✅ Auth routes loaded");
+console.log("📍 Testing if /send-otp exists:", typeof authRoutes);
+
 // Health
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
+});
+
+// 🔍 DEBUG: Catch-all for unmatched routes
+app.use((req, res) => {
+  console.log(`❌ 404 - Route not found: ${req.method} ${req.url}`);
+  res.status(404).json({ 
+    error: "Route not found",
+    path: req.url,
+    method: req.method 
+  });
 });
 
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

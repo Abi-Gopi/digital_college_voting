@@ -12,8 +12,9 @@ import Vote from "./pages/Vote";
 import Results from "./pages/Results";
 import Feedback from "./pages/Feedback";
 import Admin from "./pages/Admin";
+import AdminKyc from "./pages/AdminKyc"; // ✅ NEW
 import NotFound from "./pages/NotFound";
-import Notifications from "./components/notifications"; // ✅ import notifications
+import Notifications from "./components/notifications";
 
 const queryClient = new QueryClient();
 
@@ -21,12 +22,10 @@ const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        {/* Global Toast / Notification Providers */}
         <Toaster />
         <Sonner />
 
         <Router>
-          {/* ✅ Global real-time notifications listener */}
           <Notifications />
 
           <Routes>
@@ -35,14 +34,16 @@ const App = () => {
             <Route path="/register" element={<Register />} />
             <Route path="/login" element={<Login />} />
 
-            {/* Protected / App Routes */}
+            {/* Protected Routes */}
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/vote" element={<Vote />} />
             <Route path="/results" element={<Results />} />
             <Route path="/feedback" element={<Feedback />} />
             <Route path="/admin" element={<Admin />} />
 
-            {/* Fallback Route */}
+            {/* ✅ Admin KYC Route */}
+            <Route path="/admin/kyc" element={<AdminKyc />} />
+
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Router>

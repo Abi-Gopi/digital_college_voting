@@ -45,19 +45,12 @@ All colors MUST be HSL.
     --radius: 0.5rem;
 
     --sidebar-background: 0 0% 98%;
-
     --sidebar-foreground: 240 5.3% 26.1%;
-
     --sidebar-primary: 240 5.9% 10%;
-
     --sidebar-primary-foreground: 0 0% 98%;
-
     --sidebar-accent: 240 4.8% 95.9%;
-
     --sidebar-accent-foreground: 240 5.9% 10%;
-
     --sidebar-border: 220 13% 91%;
-
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
 
@@ -95,6 +88,7 @@ All colors MUST be HSL.
     
     --warning: 38 92% 50%;
     --warning-foreground: 210 40% 98%;
+
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
     --sidebar-primary: 224.3 76.3% 48%;
@@ -114,4 +108,48 @@ All colors MUST be HSL.
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* ===============================================
+   CANDIDATE ANNOUNCEMENT SCROLLING - FIXED VERSION
+   =============================================== */
+
+@keyframes scroll-vertical {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-50%);
+  }
+}
+
+.announcement-scroll-container {
+  display: flex;
+  flex-direction: column;
+  animation: scroll-vertical 25s linear infinite;
+  will-change: transform;
+}
+
+.announcement-item {
+  padding: 16px 20px;
+  margin-bottom: 12px;
+  background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+  border-left: 4px solid #8b5cf6;
+  border-radius: 8px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #374151;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.announcement-item:hover {
+  transform: translateX(4px);
+  background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%);
+}
+
+/* Pause on hover */
+.announcement-scroll-container:hover {
+  animation-play-state: paused;
 }

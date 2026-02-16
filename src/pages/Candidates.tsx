@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +54,7 @@ const Candidates = () => {
     }
 
     loadCandidates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const getAvatarSrc = (c: Candidate) => {
@@ -172,13 +173,10 @@ const Candidates = () => {
   const handleDelete = async (id: number) => {
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/candidates/${id}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/candidates/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
       const data = await res.json();
 
@@ -194,14 +192,13 @@ const Candidates = () => {
     }
   };
 
-  const grouped = candidates.reduce(
-    (acc: Record<string, Candidate[]>, c) => {
+  const grouped = useMemo(() => {
+    return candidates.reduce((acc: Record<string, Candidate[]>, c) => {
       if (!acc[c.Position]) acc[c.Position] = [];
       acc[c.Position].push(c);
       return acc;
-    },
-    {}
-  );
+    }, {});
+  }, [candidates]);
 
   return (
     <div className="space-y-6">
@@ -301,11 +298,12 @@ const Candidates = () => {
               {position.replace(/_/g, " ")}
             </CardTitle>
           </CardHeader>
+
           <CardContent className="grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {grouped[position]?.length ? (
               grouped[position].map((c) => (
                 <div
-                  key={c.Id}
+                  key={`${c.Position}-${c.Id}`}   // ✅ unique key (fixed)
                   className="flex flex-col items-center border rounded-xl p-4 bg-white hover:shadow-md transition"
                 >
                   <img
@@ -317,6 +315,7 @@ const Candidates = () => {
                   <p className="text-xs text-center text-gray-600">
                     {c.Manifesto}
                   </p>
+
                   {userRole === "admin" && otpVerified && (
                     <div className="flex gap-2 mt-2">
                       <Button
@@ -351,6 +350,7 @@ const Candidates = () => {
             <CardHeader>
               <CardTitle>Edit Candidate</CardTitle>
             </CardHeader>
+
             <CardContent className="space-y-3">
               <Input
                 value={editCandidate.Name}
@@ -362,7 +362,6 @@ const Candidates = () => {
                 }
               />
 
-              {/* Position dropdown */}
               <select
                 className="border rounded-md px-3 py-2 w-full"
                 value={editCandidate.Position}
@@ -380,7 +379,6 @@ const Candidates = () => {
                 ))}
               </select>
 
-              {/* Gender dropdown */}
               <select
                 className="border rounded-md px-3 py-2 w-full"
                 value={editCandidate.Gender || "male"}
@@ -416,10 +414,7 @@ const Candidates = () => {
               />
 
               <div className="flex justify-end gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => setEditCandidate(null)}
-                >
+                <Button variant="secondary" onClick={() => setEditCandidate(null)}>
                   Cancel
                 </Button>
                 <Button onClick={handleUpdate}>Save</Button>
