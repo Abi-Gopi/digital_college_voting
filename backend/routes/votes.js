@@ -1,4 +1,4 @@
-// routes/votes.js - FIXED: Using correct req.user field
+// routes/votes.js - FIXED: Correct parameter names for sp_CastVote
 
 const express = require("express");
 const sql = require("mssql");
@@ -12,16 +12,17 @@ router.post("/", authenticateToken, async (req, res) => {
   let transaction;
 
   try {
-    // ✅ FIXED: Use req.user.voterId instead of req.user.id
-    const voterId = req.user.voterId || req.user.id;
+    // ✅ Extract voterId from JWT
+    const voterId = req.user.voterId || req.user.id || req.user.VoterId;
     
     console.log("=== VOTE SUBMISSION DEBUG ===");
-    console.log("User object:", req.user);
     console.log("VoterId extracted:", voterId);
 
     if (!voterId) {
-      console.error("❌ VoterId is NULL or undefined!");
-      return res.status(400).json({ error: "Invalid user session. Please log in again." });
+      console.error("❌ VoterId is NULL!");
+      return res.status(400).json({ 
+        error: "Invalid user session. Please log out and log in again." 
+      });
     }
 
     const { votes } = req.body;
@@ -29,6 +30,12 @@ router.post("/", authenticateToken, async (req, res) => {
     if (!votes || !Array.isArray(votes) || votes.length === 0) {
       return res.status(400).json({ error: "No votes provided" });
     }
+
+    // ✅ Get IP Address and User Agent for audit log
+    const ipAddress = req.ip || req.connection.remoteAddress || "Unknown";
+    const userAgent = req.headers["user-agent"] || "Unknown";
+
+    console.log(`✅ IP: ${ipAddress}, UserAgent: ${userAgent}`);
 
     // Check if already voted
     const existing = await pool
@@ -44,51 +51,67 @@ router.post("/", authenticateToken, async (req, res) => {
     transaction = pool.transaction();
     await transaction.begin();
 
-    console.log(`✅ Inserting ${votes.length} votes for VoterId: ${voterId}`);
+    console.log(`✅ Processing ${votes.length} votes for VoterId: ${voterId}`);
 
-    // Insert each vote
+    // ✅ Insert each vote using stored procedure
     for (const vote of votes) {
-      console.log(`  - Position: ${vote.position}, CandidateId: ${vote.candidateId}`);
+      console.log(`  → Casting vote: Position=${vote.position}, CandidateId=${vote.candidateId}`);
       
-      await transaction
-        .request()
-        .input("VoterId", sql.Int, voterId)
-        .input("CandidateId", sql.Int, vote.candidateId)
-        .query(`
-          INSERT INTO dbo.Votes (VoterId, CandidateId, VotedAt)
-          VALUES (@VoterId, @CandidateId, GETDATE())
-        `);
+      try {
+        const request = transaction.request();
+        
+        // ✅ FIXED: Use @VoterId (input) not @VoteId (output)
+        request.input("VoterId", sql.Int, voterId);
+        request.input("CandidateId", sql.Int, vote.candidateId);
+        request.input("IPAddress", sql.NVarChar(50), ipAddress);
+        request.input("UserAgent", sql.NVarChar(255), userAgent);
+        request.output("VoteId", sql.Int); // This is the output parameter
+        
+        await request.execute("sp_CastVote");
+        
+        console.log(`  ✅ Vote cast successfully for candidate ${vote.candidateId}`);
+      } catch (spError) {
+        console.error(`  ❌ Error casting vote for candidate ${vote.candidateId}:`, spError.message);
+        throw spError;
+      }
     }
 
     await transaction.commit();
-    console.log("✅ Vote submission successful!");
+    console.log("✅ All votes committed successfully!");
 
     // Broadcast turnout update
     const broadcastTurnout = req.app.get("broadcastTurnout");
-    if (broadcastTurnout) await broadcastTurnout();
+    if (broadcastTurnout) {
+      await broadcastTurnout();
+    }
 
-    res.json({ success: true, message: "Votes submitted successfully" });
+    res.json({ 
+      success: true, 
+      message: "Votes submitted successfully",
+      votesCount: votes.length 
+    });
 
   } catch (err) {
     if (transaction) {
       try {
         await transaction.rollback();
-        console.log("Transaction rolled back");
+        console.log("⚠️ Transaction rolled back");
       } catch (rollbackErr) {
-        console.error("Rollback error:", rollbackErr);
+        console.error("❌ Rollback error:", rollbackErr);
       }
     }
     
     console.error("❌ Vote submission error:", err);
-    res.status(500).json({ error: "Vote submission failed" });
+    res.status(500).json({ 
+      error: err.message || "Vote submission failed"
+    });
   }
 });
 
 /* ================= STATUS ================= */
 router.get("/status", authenticateToken, async (req, res) => {
   try {
-    // ✅ FIXED: Use req.user.voterId
-    const voterId = req.user.voterId || req.user.id;
+    const voterId = req.user.voterId || req.user.id || req.user.VoterId;
 
     const userVote = await pool
       .request()
@@ -121,8 +144,7 @@ router.get("/status", authenticateToken, async (req, res) => {
 /* ================= SLIP ================= */
 router.get("/slip", authenticateToken, async (req, res) => {
   try {
-    // ✅ FIXED: Use req.user.voterId
-    const voterId = req.user.voterId || req.user.id;
+    const voterId = req.user.voterId || req.user.id || req.user.VoterId;
 
     const voter = await pool
       .request()
@@ -156,12 +178,10 @@ router.get("/slip", authenticateToken, async (req, res) => {
       return res.status(404).json({ error: "You have not voted yet." });
     }
 
-    // Convert UTC → IST
     const formattedVotes = votes.recordset.map((v) => ({
       ...v,
-      VotedAt: new Date(v.VotedAt).toLocaleString("en-IN", {
-        timeZone: "Asia/Kolkata",
-      }),
+      VotedAt: new Date(v.VotedAt).toISOString()
+    // Produces: "2026-02-19T02:31:02.000Z"
     }));
 
     res.json({
@@ -176,10 +196,30 @@ router.get("/slip", authenticateToken, async (req, res) => {
   }
 });
 
-/* ================= RESULTS ================= */
+/* ================= RESULTS - WITH PUBLICATION CHECK ================= */
 router.get("/results", authenticateToken, async (req, res) => {
   try {
-    const results = await pool.request().query(`
+    console.log("=== Fetching Results ===");
+
+    const statusCheck = await pool.request().query(`
+      SELECT SettingValue
+      FROM dbo.SystemSettings
+      WHERE SettingKey = 'ResultsPublished'
+    `);
+
+    const isPublished = 
+      statusCheck.recordset.length > 0 && 
+      statusCheck.recordset[0].SettingValue === "true";
+
+    console.log(`Results published status: ${isPublished}`);
+
+    if (!isPublished) {
+      console.log("❌ Results not published - returning empty array");
+      return res.json([]);
+    }
+
+    console.log("✅ Results are published - fetching data");
+    const result = await pool.request().query(`
       SELECT 
         c.CandidateId,
         c.Name,
@@ -193,10 +233,12 @@ router.get("/results", authenticateToken, async (req, res) => {
       ORDER BY c.Position, TotalVotes DESC
     `);
 
-    res.json(results.recordset);
-  } catch (err) {
-    console.error("Results fetch error:", err);
-    res.status(500).json({ error: "Results fetch failed" });
+    console.log(`Returning ${result.recordset.length} results`);
+    res.json(result.recordset);
+
+  } catch (error) {
+    console.error("❌ Results fetch error:", error);
+    res.status(500).json({ error: "Failed to fetch results" });
   }
 });
 

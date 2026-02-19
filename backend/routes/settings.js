@@ -1,28 +1,62 @@
-// backend/routes/settings.js - FIXED FOR YOUR DATABASE SCHEMA
+// backend/routes/settings.js - COMPLETE FIXED VERSION (No duplicate routes)
 
 const express = require("express");
 const router = express.Router();
 const pool = require("../config/db");
 
-// ✅ CORRECT IMPORT
 const { authenticateToken, isAdmin } = require("../middleware/auth");
 
-// Import notification functions
 const { 
   sendKycApprovalEmail, 
   sendKycApprovalSMS_MSG91,
-  sendOtpSMS 
+  sendOtpSMS,
+  sendKycPendingEmail   // ✅ ADD THIS
 } = require("../utils/notifications");
 
 // In-memory OTP storage for KYC (use Redis in production)
 const kycOtpStore = new Map();
 
 /* ====================================
+   GET USER PROFILE (For Current User)
+   ==================================== */
+router.get("/profile", authenticateToken, async (req, res) => {
+  try {
+    const voterId = req.user.voterId;
+
+    const result = await pool.request()
+      .input("voterId", voterId)
+      .query(`
+        SELECT 
+          VoterId,
+          FullName,
+          Email,
+          StudentId,
+          Phone,
+          Gender,
+          Department
+        FROM dbo.Voters
+        WHERE VoterId = @voterId
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ error: "Voter profile not found" });
+    }
+
+    console.log("✅ Profile fetched for voter:", voterId);
+    res.json(result.recordset[0]);
+
+  } catch (err) {
+    console.error("Error fetching profile:", err);
+    res.status(500).json({ error: "Failed to fetch profile" });
+  }
+});
+
+/* ====================================
    GET KYC STATUS (For Current User)
    ==================================== */
 router.get("/kyc-status", authenticateToken, async (req, res) => {
   try {
-    const voterId = req.user.voterId; // Using voterId from JWT
+    const voterId = req.user.voterId;
 
     const result = await pool.request()
       .input("voterId", voterId)
@@ -57,15 +91,10 @@ router.post("/kyc-send-otp", authenticateToken, async (req, res) => {
   try {
     const voterId = req.user.voterId;
 
-    // Get user's phone number
     const userResult = await pool.request()
       .input("voterId", voterId)
       .query(`
-        SELECT 
-          Phone,
-          FullName,
-          IsKycVerified,
-          AadhaarNumber
+        SELECT Phone, FullName, IsKycVerified, AadhaarNumber
         FROM dbo.Voters
         WHERE VoterId = @voterId
       `);
@@ -76,12 +105,10 @@ router.post("/kyc-send-otp", authenticateToken, async (req, res) => {
 
     const voter = userResult.recordset[0];
 
-    // Check if already verified
     if (voter.IsKycVerified) {
       return res.status(400).json({ error: "KYC already verified" });
     }
 
-    // Check if already submitted (pending verification)
     if (voter.AadhaarNumber) {
       return res.status(400).json({ 
         error: "KYC documents already submitted. Waiting for admin approval." 
@@ -92,10 +119,8 @@ router.post("/kyc-send-otp", authenticateToken, async (req, res) => {
       return res.status(400).json({ error: "Phone number not found in profile" });
     }
 
-    // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Store OTP with expiry (10 minutes)
     const otpData = {
       otp: otp,
       voterId: voterId,
@@ -106,7 +131,6 @@ router.post("/kyc-send-otp", authenticateToken, async (req, res) => {
 
     kycOtpStore.set(voterId, otpData);
 
-    // Send OTP via SMS
     const smsResult = await sendOtpSMS(voter.Phone, otp);
 
     if (smsResult.success || process.env.NODE_ENV === "development") {
@@ -116,7 +140,6 @@ router.post("/kyc-send-otp", authenticateToken, async (req, res) => {
         success: true, 
         message: "OTP sent successfully",
         maskedPhone: voter.Phone.slice(-4),
-        // REMOVE THIS IN PRODUCTION
         otp: process.env.NODE_ENV === "development" ? otp : undefined
       });
     } else {
@@ -136,10 +159,8 @@ router.post("/kyc-resend-otp", authenticateToken, async (req, res) => {
   try {
     const voterId = req.user.voterId;
 
-    // Delete old OTP
     kycOtpStore.delete(voterId);
 
-    // Get user's phone number
     const userResult = await pool.request()
       .input("voterId", voterId)
       .query("SELECT Phone FROM dbo.Voters WHERE VoterId = @voterId");
@@ -150,7 +171,6 @@ router.post("/kyc-resend-otp", authenticateToken, async (req, res) => {
 
     const phoneNumber = userResult.recordset[0].Phone;
 
-    // Generate new OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
     const otpData = {
@@ -163,7 +183,6 @@ router.post("/kyc-resend-otp", authenticateToken, async (req, res) => {
 
     kycOtpStore.set(voterId, otpData);
 
-    // Send OTP
     const smsResult = await sendOtpSMS(phoneNumber, otp);
 
     if (smsResult.success || process.env.NODE_ENV === "development") {
@@ -192,18 +211,15 @@ router.post("/submit-kyc", authenticateToken, async (req, res) => {
     const voterId = req.user.voterId;
     const { aadhaarNumber, panNumber, electionId, otp } = req.body;
 
-    // Validate required fields
     if (!aadhaarNumber || !otp) {
       return res.status(400).json({ error: "Aadhaar number and OTP are required" });
     }
 
-    // Validate Aadhaar format
     const cleanAadhaar = aadhaarNumber.replace(/\s/g, "");
     if (!/^\d{12}$/.test(cleanAadhaar)) {
       return res.status(400).json({ error: "Invalid Aadhaar number" });
     }
 
-    // Validate PAN if provided
     if (panNumber) {
       const cleanPAN = panNumber.toUpperCase().trim();
       if (!/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(cleanPAN)) {
@@ -211,20 +227,17 @@ router.post("/submit-kyc", authenticateToken, async (req, res) => {
       }
     }
 
-    // Check if OTP exists
     const storedOtpData = kycOtpStore.get(voterId);
 
     if (!storedOtpData) {
       return res.status(400).json({ error: "OTP not found. Please request a new OTP." });
     }
 
-    // Check if OTP expired
     if (Date.now() > storedOtpData.expiresAt) {
       kycOtpStore.delete(voterId);
       return res.status(400).json({ error: "OTP expired. Please request a new OTP." });
     }
 
-    // Check attempts
     if (storedOtpData.attempts >= 3) {
       kycOtpStore.delete(voterId);
       return res.status(400).json({ 
@@ -232,19 +245,14 @@ router.post("/submit-kyc", authenticateToken, async (req, res) => {
       });
     }
 
-    // Verify OTP
     if (storedOtpData.otp !== otp) {
       storedOtpData.attempts += 1;
       kycOtpStore.set(voterId, storedOtpData);
-      
       return res.status(400).json({ 
         error: `Invalid OTP. ${3 - storedOtpData.attempts} attempts remaining.` 
       });
     }
 
-    // OTP verified successfully - Update KYC documents
-
-    // Check if Aadhaar already exists for another user
     const existingAadhaar = await pool.request()
       .input("aadhaar", cleanAadhaar)
       .input("voterId", voterId)
@@ -262,7 +270,6 @@ router.post("/submit-kyc", authenticateToken, async (req, res) => {
       });
     }
 
-    // Update voter's KYC documents
     await pool.request()
       .input("voterId", voterId)
       .input("aadhaar", cleanAadhaar)
@@ -278,10 +285,25 @@ router.post("/submit-kyc", authenticateToken, async (req, res) => {
         WHERE VoterId = @voterId
       `);
 
-    // Delete OTP from store
     kycOtpStore.delete(voterId);
 
     console.log(`✅ KYC documents submitted for voter ${voterId}`);
+    
+
+    // ✅ Send KYC pending email to voter
+    try {
+      const voterInfo = await pool.request()
+      .input("voterId", voterId)
+      .query("SELECT FullName, Email FROM dbo.Voters WHERE VoterId = @voterId");
+
+      if (voterInfo.recordset.length > 0) {
+      const { FullName, Email } = voterInfo.recordset[0];
+      await sendKycPendingEmail(Email, FullName);
+      console.log(`✅ KYC pending email sent to ${Email}`);
+      }
+    } catch (emailErr) {
+      console.error("❌ Pending email error (non-blocking):", emailErr);
+    }
 
     res.json({ 
       success: true, 
@@ -329,14 +351,10 @@ router.put("/admin/verify-kyc/:id", authenticateToken, isAdmin, async (req, res)
   try {
     const voterId = req.params.id;
 
-    // Get user details
     const userResult = await pool.request()
       .input("voterId", voterId)
       .query(`
-        SELECT 
-          FullName,
-          Email,
-          Phone
+        SELECT FullName, Email, Phone
         FROM dbo.Voters
         WHERE VoterId = @voterId
       `);
@@ -347,7 +365,6 @@ router.put("/admin/verify-kyc/:id", authenticateToken, isAdmin, async (req, res)
 
     const user = userResult.recordset[0];
 
-    // Update KYC status
     await pool.request()
       .input("voterId", voterId)
       .query(`
@@ -358,14 +375,14 @@ router.put("/admin/verify-kyc/:id", authenticateToken, isAdmin, async (req, res)
         WHERE VoterId = @voterId
       `);
 
-    // Send email to USER (not admin!)
+    // ✅ Send approval email to USER (their registered email)
     const emailResult = await sendKycApprovalEmail(user.Email, user.FullName);
     
     if (emailResult.success) {
       console.log(`✅ KYC approval email sent to ${user.Email}`);
     }
 
-    // Send SMS
+    // ✅ Send approval SMS to USER
     if (user.Phone) {
       await sendKycApprovalSMS_MSG91(user.Phone, user.FullName);
     }
@@ -391,16 +408,9 @@ router.put("/admin/reject-kyc/:id", authenticateToken, isAdmin, async (req, res)
     const voterId = req.params.id;
     const { reason } = req.body;
 
-    // Get user details
     const userResult = await pool.request()
       .input("voterId", voterId)
-      .query(`
-        SELECT 
-          FullName,
-          Email
-        FROM dbo.Voters
-        WHERE VoterId = @voterId
-      `);
+      .query(`SELECT FullName, Email FROM dbo.Voters WHERE VoterId = @voterId`);
 
     if (userResult.recordset.length === 0) {
       return res.status(404).json({ error: "Voter not found" });
@@ -408,7 +418,6 @@ router.put("/admin/reject-kyc/:id", authenticateToken, isAdmin, async (req, res)
 
     const user = userResult.recordset[0];
 
-    // Clear KYC documents (allow resubmission)
     await pool.request()
       .input("voterId", voterId)
       .query(`
@@ -421,7 +430,6 @@ router.put("/admin/reject-kyc/:id", authenticateToken, isAdmin, async (req, res)
         WHERE VoterId = @voterId
       `);
 
-    // Send rejection email
     await sendKycRejectionEmail(user.Email, user.FullName, reason);
 
     res.json({ 
@@ -437,79 +445,156 @@ router.put("/admin/reject-kyc/:id", authenticateToken, isAdmin, async (req, res)
 });
 
 /* ====================================
-   GET SYSTEM DATES
+   GET SYSTEM DATES - ✅ FIXED: Returns resultsPublish too
+   Auto-adds ResultsPublishDate column if missing
    ==================================== */
 router.get("/system-dates", authenticateToken, async (req, res) => {
   try {
-    const result = await pool.request().query(`
-      SELECT TOP 1 
-        VotingStartDate,
-        VotingEndDate
-      FROM dbo.ElectionSettings
-      ORDER BY SettingId DESC
-    `);
-
-    if (result.recordset.length === 0) {
-      return res.json({ votingStart: null, votingEnd: null });
-    }
-
-    res.json({
-      votingStart: result.recordset[0].VotingStartDate,
-      votingEnd: result.recordset[0].VotingEndDate,
-    });
-  } catch (err) {
-    console.error("Error fetching system dates:", err);
-    res.status(500).json({ error: "Failed to fetch dates" });
-  }
-});
-
-// ADD THESE TWO ROUTES TO YOUR backend/routes/settings.js
-
-/* ====================================
-   UPDATE ELECTION DATES (Admin Only)
-   ==================================== */
-router.post("/update-dates", authenticateToken, isAdmin, async (req, res) => {
-  try {
-    const { votingStart, votingEnd } = req.body;
-
-    if (!votingStart || !votingEnd) {
-      return res.status(400).json({ error: "Both dates are required" });
-    }
-
-    // Check if ElectionSettings table exists, create if not
+    // ✅ Auto-create table + add ResultsPublishDate column if missing
     await pool.request().query(`
       IF OBJECT_ID('dbo.ElectionSettings', 'U') IS NULL
       BEGIN
         CREATE TABLE dbo.ElectionSettings (
           SettingId INT PRIMARY KEY IDENTITY(1,1),
-          VotingStartDate DATETIME,
-          VotingEndDate DATETIME,
+          VotingStartDate DATETIME NULL,
+          VotingEndDate DATETIME NULL,
+          ResultsPublishDate DATETIME NULL,
           CreatedAt DATETIME DEFAULT GETDATE()
         );
-      END;
+      END
+      ELSE
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_NAME = 'ElectionSettings' 
+          AND COLUMN_NAME = 'ResultsPublishDate'
+        )
+        BEGIN
+          ALTER TABLE dbo.ElectionSettings 
+          ADD ResultsPublishDate DATETIME NULL;
+        END
+      END
     `);
 
-    // Clear old records and insert new dates
-    await pool.request()
-      .input("votingStart", votingStart)
-      .input("votingEnd", votingEnd)
-      .query(`
-        DELETE FROM dbo.ElectionSettings;
-        
-        INSERT INTO dbo.ElectionSettings (VotingStartDate, VotingEndDate)
-        VALUES (@votingStart, @votingEnd);
-      `);
+    const result = await pool.request().query(`
+      SELECT TOP 1 
+        VotingStartDate,
+        VotingEndDate,
+        ResultsPublishDate
+      FROM dbo.ElectionSettings
+      ORDER BY SettingId DESC
+    `);
 
-    console.log(`✅ Election dates updated: ${votingStart} to ${votingEnd}`);
+    if (result.recordset.length === 0) {
+      return res.json({ 
+        votingStart: null, 
+        votingEnd: null,
+        resultsPublish: null 
+      });
+    }
 
-    res.json({ 
-      success: true, 
-      message: "Election dates updated successfully" 
+    const row = result.recordset[0];
+    console.log("✅ system-dates fetched:", row);
+
+    res.json({
+      votingStart: row.VotingStartDate || null,
+      votingEnd: row.VotingEndDate || null,
+      resultsPublish: row.ResultsPublishDate || null,
     });
 
   } catch (err) {
-    console.error("Update dates error:", err);
-    res.status(500).json({ error: "Failed to update election dates" });
+    console.error("❌ Error fetching system dates:", err);
+    res.status(500).json({ error: "Failed to fetch dates" });
+  }
+});
+
+/* ====================================
+   UPDATE ELECTION DATES (Admin Only)
+   ✅ FIXED: Single route, handles resultsPublish
+   Uses UPDATE if row exists, INSERT if not
+   ==================================== */
+router.post("/update-dates", authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { votingStart, votingEnd, resultsPublish } = req.body;
+
+    console.log("📅 Saving election dates:", { votingStart, votingEnd, resultsPublish });
+
+    if (!votingStart || !votingEnd) {
+      return res.status(400).json({ error: "Voting start and end dates are required" });
+    }
+
+    // ✅ Ensure table + ResultsPublishDate column exist
+    await pool.request().query(`
+      IF OBJECT_ID('dbo.ElectionSettings', 'U') IS NULL
+      BEGIN
+        CREATE TABLE dbo.ElectionSettings (
+          SettingId INT PRIMARY KEY IDENTITY(1,1),
+          VotingStartDate DATETIME NULL,
+          VotingEndDate DATETIME NULL,
+          ResultsPublishDate DATETIME NULL,
+          CreatedAt DATETIME DEFAULT GETDATE()
+        );
+      END
+      ELSE
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_NAME = 'ElectionSettings' 
+          AND COLUMN_NAME = 'ResultsPublishDate'
+        )
+        BEGIN
+          ALTER TABLE dbo.ElectionSettings 
+          ADD ResultsPublishDate DATETIME NULL;
+        END
+      END
+    `);
+
+    // ✅ UPDATE existing row OR INSERT new one (no more DELETE + INSERT)
+    const existingResult = await pool.request().query(`
+      SELECT TOP 1 SettingId FROM dbo.ElectionSettings ORDER BY SettingId DESC
+    `);
+
+    if (existingResult.recordset.length > 0) {
+      // Row exists → UPDATE it
+      await pool.request()
+        .input("votingStart", votingStart)
+        .input("votingEnd", votingEnd)
+        .input("resultsPublish", resultsPublish || null)
+        .input("settingId", existingResult.recordset[0].SettingId)
+        .query(`
+          UPDATE dbo.ElectionSettings
+          SET 
+            VotingStartDate = @votingStart,
+            VotingEndDate = @votingEnd,
+            ResultsPublishDate = @resultsPublish
+          WHERE SettingId = @settingId
+        `);
+      
+      console.log("✅ Updated existing ElectionSettings row");
+    } else {
+      // No row → INSERT new one
+      await pool.request()
+        .input("votingStart", votingStart)
+        .input("votingEnd", votingEnd)
+        .input("resultsPublish", resultsPublish || null)
+        .query(`
+          INSERT INTO dbo.ElectionSettings (VotingStartDate, VotingEndDate, ResultsPublishDate)
+          VALUES (@votingStart, @votingEnd, @resultsPublish)
+        `);
+      
+      console.log("✅ Inserted new ElectionSettings row");
+    }
+
+    console.log(`✅ Election dates saved: ${votingStart} → ${votingEnd}, Results: ${resultsPublish || 'Not set'}`);
+
+    res.json({ 
+      success: true, 
+      message: "Election dates saved successfully"
+    });
+
+  } catch (err) {
+    console.error("❌ Update dates error:", err);
+    res.status(500).json({ error: "Failed to save election dates", details: err.message });
   }
 });
 
@@ -521,24 +606,20 @@ router.put("/update-profile", authenticateToken, async (req, res) => {
     const voterId = req.user.voterId;
     const { fullName, email, phone, gender } = req.body;
 
-    // Validate required fields
     if (!fullName || !email || !phone || !gender) {
       return res.status(400).json({ error: "All fields are required" });
     }
 
-    // Validate phone format
     const cleanPhone = phone.replace(/\s/g, "");
     if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
       return res.status(400).json({ error: "Invalid phone number format" });
     }
 
-    // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return res.status(400).json({ error: "Invalid email format" });
     }
 
-    // Check if email or phone already exists for another user
     const duplicateCheck = await pool.request()
       .input("email", email)
       .input("phone", phone)
@@ -556,7 +637,6 @@ router.put("/update-profile", authenticateToken, async (req, res) => {
       });
     }
 
-    // Update profile
     await pool.request()
       .input("voterId", voterId)
       .input("fullName", fullName)
@@ -587,91 +667,6 @@ router.put("/update-profile", authenticateToken, async (req, res) => {
   }
 });
 
-// ADD THIS TO YOUR backend/routes/settings.js
-
-/* ====================================
-   UPDATE ELECTION DATES (Admin Only) - WITH RESULTS PUBLISH DATE
-   ==================================== */
-router.post("/update-dates", authenticateToken, isAdmin, async (req, res) => {
-  try {
-    const { votingStart, votingEnd, resultsPublish } = req.body;
-
-    if (!votingStart || !votingEnd) {
-      return res.status(400).json({ error: "Voting dates are required" });
-    }
-
-    // Create table if doesn't exist
-    await pool.request().query(`
-      IF OBJECT_ID('dbo.ElectionSettings', 'U') IS NULL
-      BEGIN
-        CREATE TABLE dbo.ElectionSettings (
-          SettingId INT PRIMARY KEY IDENTITY(1,1),
-          VotingStartDate DATETIME,
-          VotingEndDate DATETIME,
-          ResultsPublishDate DATETIME NULL,
-          CreatedAt DATETIME DEFAULT GETDATE()
-        );
-      END;
-    `);
-
-    // Clear old records and insert new dates
-    await pool.request()
-      .input("votingStart", votingStart)
-      .input("votingEnd", votingEnd)
-      .input("resultsPublish", resultsPublish || null)
-      .query(`
-        DELETE FROM dbo.ElectionSettings;
-        
-        INSERT INTO dbo.ElectionSettings (VotingStartDate, VotingEndDate, ResultsPublishDate)
-        VALUES (@votingStart, @votingEnd, @resultsPublish);
-      `);
-
-    console.log(`✅ Election dates updated: ${votingStart} to ${votingEnd}, Results: ${resultsPublish || 'Not set'}`);
-
-    res.json({ 
-      success: true, 
-      message: "Election dates updated successfully" 
-    });
-
-  } catch (err) {
-    console.error("Update dates error:", err);
-    res.status(500).json({ error: "Failed to update election dates" });
-  }
-});
-
-/* ====================================
-   GET SYSTEM DATES - WITH RESULTS PUBLISH DATE
-   ==================================== */
-router.get("/system-dates", authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.request().query(`
-      SELECT TOP 1 
-        VotingStartDate,
-        VotingEndDate,
-        ResultsPublishDate
-      FROM dbo.ElectionSettings
-      ORDER BY SettingId DESC
-    `);
-
-    if (result.recordset.length === 0) {
-      return res.json({ 
-        votingStart: null, 
-        votingEnd: null,
-        resultsPublish: null 
-      });
-    }
-
-    res.json({
-      votingStart: result.recordset[0].VotingStartDate,
-      votingEnd: result.recordset[0].VotingEndDate,
-      resultsPublish: result.recordset[0].ResultsPublishDate, // ✅ NEW
-    });
-  } catch (err) {
-    console.error("Error fetching system dates:", err);
-    res.status(500).json({ error: "Failed to fetch dates" });
-  }
-});
-
 /* ====================================
    HELPER: Send KYC Rejection Email
    ==================================== */
@@ -693,24 +688,19 @@ const sendKycRejectionEmail = async (to, voterName, reason) => {
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
         <h2 style="color: #dc2626; text-align: center;">KYC Verification Not Approved</h2>
-        
         <p>Dear <strong>${voterName}</strong>,</p>
-        
         <p>We regret to inform you that your identity verification (KYC) could not be approved at this time.</p>
-        
         <div style="background-color: #fef2f2; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #dc2626;">
           <p style="margin: 0;"><strong>❌ Status:</strong> Rejected</p>
           <p style="margin: 10px 0 0 0;"><strong>📅 Date:</strong> ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</p>
           <p style="margin: 10px 0 0 0;"><strong>📝 Reason:</strong> ${reason || "Documents did not meet verification requirements"}</p>
         </div>
-        
         <p><strong>What to do next:</strong></p>
         <ul>
           <li>Log in to your account and go to Settings</li>
           <li>Resubmit your KYC documents with correct information</li>
           <li>Ensure documents are clear and match your registration details</li>
         </ul>
-        
         <p style="margin-top: 30px;">Best regards,<br><strong>Anna Adarsh College Election Committee</strong></p>
       </div>
     `,

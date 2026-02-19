@@ -1,125 +1,107 @@
-// backend/utils/notifications.js - UPDATED WITH WELCOME EMAIL
+// backend/utils/notifications.js - COMPLETE VERSION
 
 const nodemailer = require("nodemailer");
+const axios = require("axios");
 
 /* ====================================
-   EMAIL CONFIGURATION
+   EMAIL TRANSPORTER SETUP
    ==================================== */
-const createEmailTransporter = () => {
-  return nodemailer.createTransporter({
-    service: "gmail",
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-  });
-};
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
 
 /* ====================================
-   SEND OTP VIA SMS (MSG91)
+   SEND OTP VIA MSG91 SMS
    ==================================== */
 const sendOtpSMS = async (phoneNumber, otp) => {
   try {
-    const axios = require("axios");
+    const cleanPhone = phoneNumber.replace(/\s+/g, "").replace(/^\+91/, "");
     
-    const authKey = process.env.MSG91_AUTH_KEY;
-    const senderId = process.env.MSG91_SENDER_ID || "ANNELC";
-
-    if (!authKey) {
-      console.log("⚠️ MSG91 not configured. OTP:", otp);
-      return { success: false, error: "MSG91 not configured", otp };
-    }
-
-    // Remove +91 prefix if present
-    const cleanPhone = phoneNumber.replace(/^\+91/, "").replace(/\s+/g, "");
-
-    const message = `Your OTP for Anna Adarsh College Election registration is: ${otp}. Valid for 10 minutes. Do not share this OTP with anyone.`;
-
-    const url = `https://api.msg91.com/api/v2/sendsms`;
-
-    const response = await axios.post(url, {
-      sender: senderId,
-      route: "4",
-      country: "91",
-      sms: [
+    const url = `https://control.msg91.com/api/v5/flow/`;
+    
+    const payload = {
+      template_id: "your_template_id", // You can get this from MSG91 dashboard
+      short_url: "0",
+      recipients: [
         {
-          message: message,
-          to: [cleanPhone],
+          mobiles: `91${cleanPhone}`,
+          var1: otp, // OTP variable
         },
       ],
-    }, {
+    };
+
+    const response = await axios.post(url, payload, {
       headers: {
-        "authkey": authKey,
+        authkey: process.env.MSG91_AUTH_KEY,
         "Content-Type": "application/json",
       },
     });
 
-    console.log(`✅ OTP SMS sent to ${cleanPhone}`);
-    return { success: true, response: response.data };
+    console.log(`✅ SMS sent to ${cleanPhone}:`, response.data);
+    return { success: true, data: response.data };
     
   } catch (error) {
-    console.error("❌ OTP SMS failed:", error.message);
-    return { success: false, error: error.message, otp };
+    console.error("❌ MSG91 SMS Error:", error.response?.data || error.message);
+    return { success: false, error: error.message };
   }
 };
 
 /* ====================================
-   SEND WELCOME EMAIL (After Registration)
+   SEND WELCOME EMAIL AFTER REGISTRATION
    ==================================== */
-const sendWelcomeEmail = async (to, voterName) => {
+const sendWelcomeEmail = async (toEmail, voterName) => {
   try {
-    const transporter = createEmailTransporter();
-
     const mailOptions = {
       from: `"Anna Adarsh College" <${process.env.EMAIL_USER}>`,
-      to: to,
+      to: toEmail,
       subject: "🎉 Welcome to Anna Adarsh College Election System",
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
-          <h2 style="color: #2563eb; text-align: center;">🎉 Welcome to Anna Adarsh Elections!</h2>
+          <h2 style="color: #2563eb; text-align: center;">Welcome to Anna Adarsh College Elections!</h2>
           
           <p>Dear <strong>${voterName}</strong>,</p>
           
-          <p>Thank you for registering for the Anna Adarsh College Election System!</p>
+          <p>Thank you for registering with the Anna Adarsh College Election System. Your account has been successfully created!</p>
           
-          <div style="background-color: #f0f9ff; padding: 15px; border-radius: 8px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: #1e40af;">📋 Next Steps:</h3>
-            <ol style="margin: 10px 0; padding-left: 20px;">
-              <li><strong>KYC Verification:</strong> Your account is pending KYC verification by our admin team</li>
-              <li><strong>Email Notification:</strong> You'll receive an email once your KYC is approved</li>
-              <li><strong>Start Voting:</strong> After approval, you can log in and cast your vote</li>
-            </ol>
+          <div style="background-color: #eff6ff; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2563eb;">
+            <p style="margin: 0;"><strong>✅ Status:</strong> Account Created</p>
+            <p style="margin: 10px 0 0 0;"><strong>📅 Date:</strong> ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</p>
           </div>
           
-          <div style="background-color: #fef3c7; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f59e0b;">
-            <p style="margin: 0;"><strong>⏳ Pending Status:</strong> Your KYC verification is currently under review. This usually takes 24-48 hours.</p>
+          <p><strong>Next Steps:</strong></p>
+          <ol>
+            <li>Log in to your account</li>
+            <li>Go to <strong>Settings</strong> page</li>
+            <li>Submit your KYC documents (Aadhaar, PAN, Election ID)</li>
+            <li>Wait for admin approval</li>
+            <li>Once approved, you can vote!</li>
+          </ol>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="http://localhost:8081/login" style="background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
+              Login to Your Account
+            </a>
           </div>
           
-          <p><strong>Your Registration Details:</strong></p>
-          <ul>
-            <li>📧 Email: ${to}</li>
-            <li>📅 Registered On: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</li>
-          </ul>
-          
-          <p style="margin-top: 30px;">If you have any questions, please contact the election admin.</p>
-          
-          <p>Best regards,<br><strong>Anna Adarsh College Election Committee</strong></p>
-          
-          <hr style="margin: 30px 0; border: none; border-top: 1px solid #e0e0e0;">
-          
-          <p style="font-size: 12px; color: #666; text-align: center;">
-            This is an automated message. Please do not reply to this email.
+          <p style="margin-top: 30px; color: #666; font-size: 12px;">
+            If you did not create this account, please ignore this email or contact the election committee.
           </p>
+          
+          <p style="margin-top: 30px;">Best regards,<br><strong>Anna Adarsh College Election Committee</strong></p>
         </div>
       `,
     };
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ Welcome email sent to: ${to}`);
-    return { success: true, messageId: info.messageId };
+    const result = await transporter.sendMail(mailOptions);
+    console.log(`✅ Welcome email sent to ${toEmail}`);
+    return { success: true, messageId: result.messageId };
     
   } catch (error) {
-    console.error("❌ Welcome email failed:", error);
+    console.error(`❌ Failed to send welcome email to ${toEmail}:`, error);
     return { success: false, error: error.message };
   }
 };
@@ -127,104 +109,75 @@ const sendWelcomeEmail = async (to, voterName) => {
 /* ====================================
    SEND KYC APPROVAL EMAIL
    ==================================== */
-const sendKycApprovalEmail = async (to, voterName) => {
+const sendKycApprovalEmail = async (toEmail, voterName) => {
   try {
-    const transporter = createEmailTransporter();
-
     const mailOptions = {
       from: `"Anna Adarsh College" <${process.env.EMAIL_USER}>`,
-      to: to,
+      to: toEmail,
       subject: "✅ KYC Verification Approved - Anna Adarsh Election",
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
-          <h2 style="color: #2563eb; text-align: center;">🎉 KYC Verification Approved!</h2>
+          <h2 style="color: #10b981; text-align: center;">KYC Verification Approved!</h2>
           
           <p>Dear <strong>${voterName}</strong>,</p>
           
-          <p>Congratulations! Your identity verification (KYC) has been successfully approved by our admin team.</p>
+          <p>Great news! Your identity verification (KYC) has been approved by the election committee.</p>
           
-          <div style="background-color: #f0f9ff; padding: 15px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 0;"><strong>✅ Status:</strong> Verified</p>
-            <p style="margin: 10px 0 0 0;"><strong>📅 Approved On:</strong> ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</p>
+          <div style="background-color: #d1fae5; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #10b981;">
+            <p style="margin: 0;"><strong>✅ Status:</strong> KYC Approved</p>
+            <p style="margin: 10px 0 0 0;"><strong>📅 Date:</strong> ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</p>
           </div>
           
-          <p>You are now eligible to participate in the upcoming college elections. You can:</p>
-          <ul>
-            <li>✅ Cast your vote during the election period</li>
-            <li>✅ View election results</li>
-            <li>✅ Access all voter features</li>
-          </ul>
+          <p><strong>🎉 You can now vote in the Anna Adarsh College Elections!</strong></p>
           
           <div style="text-align: center; margin: 30px 0;">
-            <a href="${process.env.FRONTEND_URL || 'http://localhost:8081'}/login" 
-               style="background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
-              Login to Vote
+            <a href="http://localhost:8081/login" style="background-color: #10b981; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
+              Login & Cast Your Vote
             </a>
           </div>
           
           <p style="margin-top: 30px;">Best regards,<br><strong>Anna Adarsh College Election Committee</strong></p>
-          
-          <hr style="margin: 30px 0; border: none; border-top: 1px solid #e0e0e0;">
-          
-          <p style="font-size: 12px; color: #666; text-align: center;">
-            This is an automated message. Please do not reply to this email.
-          </p>
         </div>
       `,
     };
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log("✅ KYC approval email sent:", info.messageId);
-    return { success: true, messageId: info.messageId };
+    const result = await transporter.sendMail(mailOptions);
+    console.log(`✅ KYC approval email sent to ${toEmail}`);
+    return { success: true, messageId: result.messageId };
     
   } catch (error) {
-    console.error("❌ Email sending failed:", error);
+    console.error(`❌ Failed to send KYC approval email to ${toEmail}:`, error);
     return { success: false, error: error.message };
   }
 };
 
 /* ====================================
-   SEND KYC APPROVAL SMS
+   SEND KYC APPROVAL SMS VIA MSG91
    ==================================== */
 const sendKycApprovalSMS_MSG91 = async (phoneNumber, voterName) => {
   try {
-    const axios = require("axios");
+    const cleanPhone = phoneNumber.replace(/\s+/g, "").replace(/^\+91/, "");
     
-    const authKey = process.env.MSG91_AUTH_KEY;
-    const senderId = process.env.MSG91_SENDER_ID || "ANNELC";
-
-    if (!authKey) {
-      console.log("⚠️ MSG91 not configured, skipping SMS");
-      return { success: false, error: "MSG91 not configured" };
-    }
-
-    const cleanPhone = phoneNumber.replace(/^\+91/, "").replace(/\s+/g, "");
-    const message = `Hi ${voterName}, Your KYC has been approved! You can now vote in Anna Adarsh College Elections. Login at ${process.env.FRONTEND_URL || 'http://localhost:8081'}`;
-
-    const url = `https://api.msg91.com/api/v2/sendsms`;
-
-    const response = await axios.post(url, {
-      sender: senderId,
-      route: "4",
+    const message = `Hi ${voterName}, Your KYC has been approved! You can now vote in Anna Adarsh College Elections. Login at http://localhost:8081`;
+    
+    const url = `https://control.msg91.com/api/sendhttp.php`;
+    
+    const params = {
+      authkey: process.env.MSG91_AUTH_KEY,
+      mobiles: `91${cleanPhone}`,
+      message: message,
+      sender: process.env.MSG91_SENDER_ID || "ANNELC",
+      route: process.env.MSG91_ROUTE || "4",
       country: "91",
-      sms: [
-        {
-          message: message,
-          to: [cleanPhone],
-        },
-      ],
-    }, {
-      headers: {
-        "authkey": authKey,
-        "Content-Type": "application/json",
-      },
-    });
+    };
 
-    console.log("✅ KYC SMS sent:", response.data);
-    return { success: true, response: response.data };
+    const response = await axios.get(url, { params });
+    
+    console.log(`✅ KYC approval SMS sent to ${cleanPhone}`);
+    return { success: true, data: response.data };
     
   } catch (error) {
-    console.error("❌ KYC SMS failed:", error);
+    console.error(`❌ Failed to send KYC approval SMS:`, error.response?.data || error.message);
     return { success: false, error: error.message };
   }
 };
